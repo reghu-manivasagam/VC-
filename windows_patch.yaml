@@ -1,0 +1,208 @@
+version: 1.0
+tasks:
+  # [43, 12]
+  Get_version:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: $PSVersionTable
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - Check_module
+  # [31, 111]
+  Check_module:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "if (Get-Module -ListAvailable -Name PSWindowsUpdate) \n{ \nWrite-Host \"Module exists\"\n} \nelse {\n    Write-Host \"Module does not exist\"\n}"
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - set_policy
+  # [11, 206]
+  set_policy:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force\nwrite-Output \"Execution policy Changed- Remote Signed.\""
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - Get_Update
+  # [157, 305]
+  Get_Update:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: get-WindowsUpdate
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - req_update
+      - do:
+          - mail_update_details
+  # [0, 405]
+  req_update:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: Get-WUlist -Category <%ctx('method')%>
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - task_schdlr
+  # [20, 507]
+  task_schdlr:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "$action = New-ScheduledTaskAction -Execute PowerShell.exe -WorkingDirectory C:\\Users\\mayaadmin\\Documents\\scripts -Argument “C:\\Users\\mayaadmin\\Documents\\scripts\\test_script.ps1 <% ctx('method')%>”\n$trigger =  New-ScheduledTaskTrigger -Once -At (Get-Date)\nRegister-ScheduledTask -Action $action -Trigger $trigger -TaskName \"AppLog\" -Description \"Daily dump of Applog\"\nStart-ScheduledTask -TaskName \"AppLog\""
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - schdlr_status
+  # [537, 101]
+  schdlr_status:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "$state=Get-ScheduledTask  -TaskName \"AppLog\" | Select-Object State\nIf($state -like '*Running*') {write-Host \"Running\"} else {Write-Host \"Ready\"}"
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - checking_schdr_status
+        when: <% succeeded() %>
+        publish:
+          - key: <% result().stdout%>
+  # [574, 203]
+  checking_schdr_status:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "if( '<%ctx().key%>' -imatch 'Running')\n{sleep 10}\nelseif ('<%ctx().key%>' -imatch 'Ready')\n{Write-Output \"Ready\"}"
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - schdlr_status
+        when: "{{ ctx().key | regex_match('Running') }}"
+      - do:
+          - task_result
+        when: "{{ ctx().key | regex_match('Ready') }}"
+  # [553, 302]
+  task_result:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "$taskresult =Get-ScheduledTaskInfo -TaskName 'AppLog' | Select-Object LastTaskResult \n$val=$taskresult -replace \"[^0-9]\" , ''\nif( $val -eq 0)\n{write-output \"Task completed successfully\"}\nelseif($val -NE 0)\n{write-output \"Error occured!!\"}"
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - taskresult_status
+        when: <% succeeded() %>
+        publish:
+          - stat: <% result().stdout %>
+  # [682, 403]
+  taskresult_status:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "if( '<%ctx().stat%>' -imatch 'Task completed successfully')\n{write-output \"Task Completed \"}\nelseif ('<%ctx().stat%>' -imatch 'Error occured')\n{Write-Output \"Error occured while running the task\"}"
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - update_log
+        when: "{{ ctx().stat | regex_match('Task completed successfully') }}"
+      - do:
+          - schldr_error
+        when: "{{ ctx().stat | regex_match('Error occured while running the task') }}"
+  # [540, 527]
+  update_log:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "Get-Content -Path C:\\Users\\mayaadmin\\Documents\\scripts\\up.log"
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - patch_status
+      - do:
+          - mail_patch
+  # [814, 528]
+  schldr_error:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "write-output \"Error occured while running the task\""
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+    next:
+      - do:
+          - log_file
+  # [382, 638]
+  patch_status:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "$status=Get-HotFix | where { $_.installedon } | select-object InstalledBy,HotFixID,InstalledOn\n$status -imatch 'USTCISAUTOSQL01'"
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+  # [827, 710]
+  log_file:
+    action: core.winrm_ps_cmd
+    input:
+      transport: ntlm
+      cmd: "Get-Content -Path C:\\Users\\mayaadmin\\Documents\\scripts\\updatehistory.log"
+      host: USTCISAUTOSQL01
+      password: Maya@uto@123
+      username: mayaadmin
+      port: 5985
+  # [239, 398]
+  mail_update_details:
+    action: core.echo
+    input:
+      message: mail the update detail.
+  # [657, 635]
+  mail_patch:
+    action: core.echo
+    input:
+      message: mail the patch details
+input:
+  - method
